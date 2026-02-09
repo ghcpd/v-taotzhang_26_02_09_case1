@@ -37,10 +37,17 @@ class Parser:
         self.pos += 1
         return tok
 
+    def eat_ident_or_kw(self) -> Token:
+        tok = self.cur()
+        if tok.kind not in ("IDENT", "KW"):
+            raise ParseError(f"Expected identifier or keyword, got {tok.kind}:{tok.text}")
+        self.pos += 1
+        return tok
+
     def parse(self) -> CreateTable:
         self.eat("KW", "CREATE")
         self.eat("KW", "TABLE")
-        table = self.eat("IDENT").text
+        table = self.eat_ident_or_kw().text
 
         self.eat("(", "(")
         columns: List[ColumnDef] = [self.parse_column()]
@@ -54,7 +61,7 @@ class Parser:
         return CreateTable(table_name=table, columns=columns)
 
     def parse_column(self) -> ColumnDef:
-        name = self.eat("IDENT").text
+        name = self.eat_ident_or_kw().text
         self.eat("KW", "STRUCT")
         self.eat("<", "<")
 
@@ -70,11 +77,11 @@ class Parser:
         tok = self.cur()
 
         # field name
-        if tok.kind == "IDENT":
-            field_name = self.eat("IDENT").text
+        if tok.kind in ("IDENT", "KW"):
+            field_name = self.eat(tok.kind).text
         else:
             # for now, require identifiers only
-            raise ParseError(f"Expected struct field IDENT, got {tok.kind}:{tok.text}")
+            raise ParseError(f"Expected struct field IDENT or KW, got {tok.kind}:{tok.text}")
 
         self.eat(":", ":")
 

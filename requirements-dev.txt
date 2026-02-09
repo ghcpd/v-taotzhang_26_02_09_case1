@@ -1,0 +1,11 @@
+# Development dependencies
+-r requirements.txt
+
+# Testing
+pytest-cov
+pytest-xdist
+
+# Code quality
+black
+flake8
+mypy

@@ -40,7 +40,11 @@ class Parser:
     def parse(self) -> CreateTable:
         self.eat("KW", "CREATE")
         self.eat("KW", "TABLE")
-        table = self.eat("IDENT").text
+        # table name can be IDENT or a keyword (e.g., INTERVAL) in databricks mode
+        tok = self.cur()
+        if tok.kind not in ("IDENT", "KW"):
+            raise ParseError(f"Expected table name IDENT or KW, got {tok.kind}:{tok.text}")
+        table = self.eat(tok.kind).text
 
         self.eat("(", "(")
         columns: List[ColumnDef] = [self.parse_column()]
@@ -54,8 +58,17 @@ class Parser:
         return CreateTable(table_name=table, columns=columns)
 
     def parse_column(self) -> ColumnDef:
-        name = self.eat("IDENT").text
-        self.eat("KW", "STRUCT")
+        # column name can be IDENT or KW (e.g., interval)
+        tok = self.cur()
+        if tok.kind not in ("IDENT", "KW"):
+            raise ParseError(f"Expected column name IDENT or KW, got {tok.kind}:{tok.text}")
+        name = self.eat(tok.kind).text
+
+        # expect STRUCT type keyword (could also be tokenized as IDENT if not in keywords)
+        struct_tok = self.cur()
+        if struct_tok.text != "STRUCT":
+            raise ParseError(f"Expected STRUCT keyword, got {struct_tok.kind}:{struct_tok.text}")
+        self.eat(struct_tok.kind, "STRUCT")
         self.eat("<", "<")
 
         fields: List[StructField] = [self.parse_struct_field()]
@@ -69,12 +82,11 @@ class Parser:
     def parse_struct_field(self) -> StructField:
         tok = self.cur()
 
-        # field name
-        if tok.kind == "IDENT":
-            field_name = self.eat("IDENT").text
+        # field name can be IDENT or KW (contextual keywords allowed)
+        if tok.kind in ("IDENT", "KW"):
+            field_name = self.eat(tok.kind).text
         else:
-            # for now, require identifiers only
-            raise ParseError(f"Expected struct field IDENT, got {tok.kind}:{tok.text}")
+            raise ParseError(f"Expected struct field IDENT or KW, got {tok.kind}:{tok.text}")
 
         self.eat(":", ":")
 

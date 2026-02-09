@@ -1,0 +1,3 @@
+# Core requirements (no external dependencies needed for parsing)
+# This file is for documentation purposes.
+# The mini_sqlglot parser has zero runtime dependencies.

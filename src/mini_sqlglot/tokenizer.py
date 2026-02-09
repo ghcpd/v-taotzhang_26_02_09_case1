@@ -9,10 +9,10 @@ class Token:
     text: str
 
 
-# Intentionally small keyword set for the exercise
+# Structural keywords only - globally reserved
+# Context-dependent keywords (INTERVAL, COMMENT, STRUCT, DOUBLE) are allowed as identifiers
 KEYWORDS = {
-    "CREATE", "TABLE", "STRUCT", "COMMENT", "DOUBLE",
-    "INTERVAL",
+    "CREATE", "TABLE",
 }
 
 

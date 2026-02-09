@@ -1,0 +1,468 @@
+User: # TITLE - Databricks Identifier/Keyword Handling Regression (Multiple Keywords as Identifiers)
+
+## [Problem Statement]
+You are working on a lightweight SQL parsing module that supports a small subset of Databricks DDL. A user reported that parsing Databricks SQL fails when using certain words (like `interval`, `comment`, `struct`) as identifiers without backticks, even though Databricks documentation indicates these are not reserved keywords under ANSI compliance and should be usable as identifiers in appropriate contexts.
+
+The parser currently supports `CREATE TABLE ... ( col STRUCT<...> )` and optional `COMMENT '...'` on struct fields. However, a systematic regression/bug causes the parser to incorrectly treat context-dependent keywords as globally reserved, breaking valid Databricks SQL.
+
+### Specific Bug Manifestations
+
+The following 6 related bugs have been identified:
+
+**Bug 1-3 (Tokenizer Level)**: Words incorrectly categorized as globally reserved keywords
+- `INTERVAL` is in the KEYWORDS set but should be usable as an identifier
+- `COMMENT` is in the KEYWORDS set but should be usable as an identifier (contextual keyword)
+- `STRUCT` is in the KEYWORDS set but should be usable as an identifier (contextual keyword)
+
+**Bug 4-6 (Parser Level)**: Parser strictly requires IDENT tokens in identifier positions, rejecting KW tokens
+- Table names: Parser rejects keywords as table names
+- Column names: Parser rejects keywords as column names  
+- Struct field names: Parser rejects keywords as struct field names
+
+Your task is to fix these functional bugs so that the parser behaves as Databricks specifies.
+
+## [Requirements]
+
+### Functional Requirements
+
+1) **Databricks mode fix**: In `read="databricks"` mode, the following must parse successfully:
+   - `CREATE TABLE interval (col STRUCT<foo: INT>)` — keyword as table name
+   - `CREATE TABLE t (interval STRUCT<foo: INT>)` — keyword as column name
+   - `CREATE TABLE t (col STRUCT<interval: DOUBLE>)` — keyword as struct field name
+   - `CREATE TABLE t (col STRUCT<comment: STRING>)` — keyword as struct field name
+   - `CREATE TABLE t (col STRUCT<struct: INT>)` — keyword as struct field name
+   - `CREATE TABLE t (col STRUCT<interval: DOUBLE COMMENT 'description'>)` — with COMMENT clause
+
+2) **Keep quoted identifiers working**: The following must still parse correctly:
+   - `CREATE TABLE `interval` (col STRUCT<foo: INT>)`
+   - `CREATE TABLE t (`interval` STRUCT<foo: INT>)`
+   - `CREATE TABLE t (col STRUCT<`interval`: DOUBLE>)`
+   - `CREATE TABLE t (col STRUCT<`interval`: DOUBLE COMMENT 'aaa'>)`
+
+3) **Do not relax invalid syntax**: Clearly invalid struct definitions must still fail:
+   - Missing `:` in struct field definition
+   - Missing `>` to close struct
+   - Missing type after `:`
+   - Other syntactically invalid constructs
+
+4) **Preserve API**: Keep the public entrypoint `parse_one(sql: str, read: str = "databricks") -> CreateTable`
+
+5) **Regression tests**: Add comprehensive tests proving:
+   - All 6 bugs are fixed (unquoted keywords work as identifiers)
+   - Quoted identifiers still work
+   - Invalid syntax still fails appropriately
+
+### Non-Functional Requirements
+
+- Make changes minimal and localized
+- No new dependencies beyond test tooling
+- Keep code readable and consistent with existing style
+- Maintain backward compatibility for valid syntax
+
+## [Expected Deliverables]
+
+1. **Patch fixing all 6 bugs**:
+   - Fix tokenizer to handle context-dependent keywords appropriately
+   - Fix parser to accept keywords in identifier positions
+   
+2. **Test suite update** covering:
+   - Unquoted `interval` as table name (should pass)
+   - Unquoted `interval` as column name (should pass)
+   - Unquoted `interval` as struct field name (should pass)
+   - Unquoted `comment` as struct field name (should pass)
+   - Unquoted `struct` as struct field name (should pass)
+   - Backticked versions of above (should pass)
+   - Invalid struct syntax cases (should fail appropriately)
+   - Struct field with COMMENT clause using keyword identifiers (should pass)
+
+3. **Documentation**:
+   - Short note explaining what changed and why
+   - Before/after examples demonstrating the fix
+
+## [Scope & Constraints]
+
+### In Scope
+- Tokenizer behavior: Handling of context-dependent keywords vs. identifiers
+- Parser behavior: Accepting keywords in identifier positions (table names, column names, struct field names)
+- Databricks dialect handling and ANSI compliance
+- Comment parsing on struct fields
+
+### Out of Scope
+- Full SQL dialect coverage beyond provided subset
+- Full Databricks grammar beyond CREATE TABLE with STRUCT
+- Nested complex types beyond what base code already supports
+- Other SQL statements (SELECT, INSERT, etc.)
+
+### Constraints
+- Do not redesign the AST; modify only what is necessary
+- Maintain existing API contracts
+- Keep changes minimal and focused on the identified bugs
+
+## [Tasks]
+
+1. **Reproduce the failures** using the provided test cases
+2. **Identify root causes**:
+   - Why are certain words treated as globally reserved?
+   - Why does the parser reject keywords in identifier positions?
+3. **Implement fixes**:
+   - Option A: Remove non-structural keywords from KEYWORDS set
+   - Option B: Make parser accept both IDENT and KW tokens in identifier contexts
+   - Option C: Implement context-aware tokenization
+4. **Add regression tests** ensuring all 6 bugs are fixed
+5. **Verify** that invalid syntax still fails appropriately
+
+## [Supporting Files]
+- README.md — Give me a readme according to the requirements.
+- FEATURE_SPEC.md — Expected Databricks STRUCT identifier behavior (interval without backticks must parse)
+- run_tests.sh / run_tests.ps1 — One-click runner (venv → install deps → pytest → smoke repro)
+- requirements.txt / requirements-dev.txt — Reproducible dependencies
+- tests/test_databricks_struct_interval.py — Regression tests (quoted pass, unquoted pass, invalid fails)
+- scripts/smoke_repro.py — Minimal repro script for before/after verification
+
+
+
+GitHub Copilot: I'll help you fix this Databricks SQL parser bug. Let me start by examining the current code structure and reproducing the failures. 
+
+Read [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/src/mini_sqlglot/tokenizer.py)
+
+Read [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/src/mini_sqlglot/parser.py)
+
+Read [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/src/mini_sqlglot/ast.py)
+
+Read [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/src/mini_sqlglot/__init__.py)
+
+Now let me set up a todo list to organize the work ahead: 
+
+Created 5 todos
+
+Let me run the test to reproduce the failures: 
+
+Ran terminal command: python -m pytest test_interval_bug.py -v
+
+Let me add src to PYTHONPATH: 
+
+Ran terminal command: $env:PYTHONPATH="c:\Users\v-taotzhang\26_02_09\Bugbash_workflow\Claude-haiku-4.5\src"; python -m pytest test_interval_bug.py -v
+
+Perfect! I can now see the root causes:
+
+1. **Tokenizer issue**: Keywords like `INTERVAL`, `COMMENT`, and `STRUCT` are hardcoded in the `KEYWORDS` set, so they're tokenized as `KW` instead of `IDENT`.
+2. **Parser issue**: The parser strictly requires `IDENT` tokens in identifier positions (table names, column names, struct field names), rejecting `KW` tokens.
+
+Let me update the todo and implement the fix: 
+
+Starting: *Fix parser to accept keywords as identifiers* (2/5)
+
+Now I'll implement the fix. The strategy is to:
+1. Separate "structural" keywords (CREATE, TABLE, STRUCT) from "context-dependent" keywords (INTERVAL, COMMENT, DOUBLE)
+2. Only treat structural keywords as globally reserved
+3. Modify the parser to accept both IDENT and KW tokens in identifier contexts (table names, column names, struct field names) 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Now update the parser to accept keywords as identifiers in appropriate contexts: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Now update the column name parsing: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Now update the struct field name parsing to accept keywords: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Now let's test the fixes: 
+
+Ran terminal command: $env:PYTHONPATH="c:\Users\v-taotzhang\26_02_09\Bugbash_workflow\Claude-haiku-4.5\src"; python -m pytest test_interval_bug.py -v
+
+I see! Now that STRUCT is no longer in the KEYWORDS set, it's being tokenized as IDENT. I need to fix the parser to accept both IDENT and KW tokens for STRUCT as well. Let me update the parse_column method: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Also need to fix the COMMENT handling in parse_struct_field: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Now let's test again: 
+
+Ran terminal command: $env:PYTHONPATH="c:\Users\v-taotzhang\26_02_09\Bugbash_workflow\Claude-haiku-4.5\src"; python -m pytest test_interval_bug.py -v
+
+Excellent! All tests pass. Now let me mark task 2 as complete and move on to creating comprehensive regression tests: 
+
+Starting: *Create comprehensive regression tests* (3/5)
+
+Now let me create a comprehensive test file in the `tests` directory: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/tests)
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/tests/test_databricks_struct_interval.py)
+
+Now let's run the comprehensive tests: 
+
+Ran terminal command: $env:PYTHONPATH="c:\Users\v-taotzhang\26_02_09\Bugbash_workflow\Claude-haiku-4.5\src"; python -m pytest tests/test_databricks_struct_interval.py -v
+
+Perfect! All 31 tests pass. Now let me update the todo and create supporting documentation files: 
+
+Starting: *Create supporting documentation files* (4/5)
+
+Now let's create the documentation files. First, README.md: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/README.md)
+
+Now let's create the FEATURE_SPEC.md: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/FEATURE_SPEC.md)
+
+Now create the smoke reproduction script: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/scripts)
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/scripts/smoke_repro.py)
+
+Let's test the smoke script: 
+
+Ran terminal command: $env:PYTHONPATH="c:\Users\v-taotzhang\26_02_09\Bugbash_workflow\Claude-haiku-4.5\src"; python scripts/smoke_repro.py
+
+Perfect! Now let's create the PowerShell test runner: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/run_tests.ps1)
+
+Now let's create a bash version for Linux/Mac compatibility: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/run_tests.sh)
+
+Now create the requirements files: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/requirements.txt)
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/requirements-dev.txt)
+
+Perfect! Now let's run the PowerShell test runner to verify everything works: 
+
+Ran terminal command: .\run_tests.ps1
+
+Excellent! All tests pass. Let me update the todo and verify the file structure is complete: 
+
+Starting: *Verify all fixes work correctly* (5/5)
+
+Let me verify all files exist and create a final summary: 
+
+Ran terminal command: Get-ChildItem -Recurse -Include "*.py", "*.md", "*.txt", "*.ps1", "*.sh" | Select-Object FullName | Format-Table -AutoSize
+
+Perfect! Let me create a final comprehensive summary document: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/IMPLEMENTATION_SUMMARY.md)
+
+Perfect! Now let me verify the fixed source files one more time to ensure everything is correct: 
+
+Read [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/src/mini_sqlglot/tokenizer.py#1-1), lines 1 to 25
+
+Read [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/src/mini_sqlglot/parser.py#40-40), lines 40 to 114
+
+Perfect! Let me mark the final todo as complete: 
+
+Completed: *Verify all fixes work correctly* (5/5)
+
+Perfect! Let me create one final comprehensive verification run to show everything working: 
+
+Ran terminal command: $env:PYTHONPATH="src"; python -m pytest -v --tb=short 2>&1 | head -100
+
+Let me use PowerShell syntax instead: 
+
+Ran terminal command: $env:PYTHONPATH="src"; python -m pytest -v --tb=line | Select-Object -First 80
+
+Perfect! All 37 tests pass. Let me create a final delivery checklist document: 
+
+Created [](file:///c%3A/Users/v-taotzhang/26_02_09/Bugbash_workflow/Claude-haiku-4.5/DELIVERY_CHECKLIST.md)
+
+Perfect! Let me create one final comprehensive list of all deliverables: 
+
+Ran terminal command: Write-Host "=== DELIVERABLES ===" -ForegroundColor Green; Write-Host "`n1. CORE FIXES" -ForegroundColor Yellow; Get-ChildItem -Path "src/mini_sqlglot/*.py" -Recurse | ForEach-Object { "   - " + $_.Name }; Write-Host "`n2. TEST FILES" -ForegroundColor Yellow; Get-ChildItem -Path "tests/*.py", "test_*.py" -Recurse -ErrorAction SilentlyContinue | ForEach-Object { "   - " + $_.Name }; Write-Host "`n3. DOCUMENTATION" -ForegroundColor Yellow; Get-ChildItem -Path "*.md", "requirements*.txt" | Where-Object { $_.Name -notmatch "pytest_cache" } | ForEach-Object { "   - " + $_.Name }; Write-Host "`n4. AUTOMATION" -ForegroundColor Yellow; Get-ChildItem -Path "*.ps1", "*.sh", "scripts/*.py" | ForEach-Object { "   - " + $_.Name }
+
+Excellent! Let me create one final summary to display to the user: 
+
+Ran terminal command: python -m pytest --co -q
+
+Perfect! Now let me create a final comprehensive summary:
+
+---
+
+## 🎉 **PROJECT COMPLETE - All 6 Bugs Fixed!**
+
+I've successfully fixed all 6 Databricks identifier/keyword handling bugs. Here's what was delivered:
+
+### **✅ Bugs Fixed**
+
+| Bug | Issue | Fix | Status |
+|-----|-------|-----|--------|
+| 1 | INTERVAL in KEYWORDS set | Removed from global keywords | ✅ |
+| 2 | COMMENT in KEYWORDS set | Removed from global keywords | ✅ |
+| 3 | STRUCT in KEYWORDS set | Removed from global keywords | ✅ |
+| 4 | Keywords rejected as table names | Parser accepts both IDENT/KW tokens | ✅ |
+| 5 | Keywords rejected as column names | Parser accepts both IDENT/KW tokens | ✅ |
+| 6 | Keywords rejected as struct fields | Parser accepts both IDENT/KW tokens | ✅ |
+
+### **📝 Code Changes (Minimal & Localized)**
+
+**tokenizer.py**
+- Changed KEYWORDS set from `{"CREATE", "TABLE", "STRUCT", "COMMENT", "DOUBLE", "INTERVAL"}` to `{"CREATE", "TABLE"}`
+- Only 2 lines changed
+
+**parser.py**
+- Modified `parse()` to accept keywords as table names
+- Modified `parse_column()` to accept keywords as column names  
+- Modified `parse_struct_field()` to accept keywords as struct field names
+- ~15 lines changed with flexible token kind handling
+
+### **✅ Test Coverage (55+ Tests, ALL PASSING)**
+
+#### Original Bug Tests - test_interval_bug.py
+- 6 tests covering all bug manifestations ✅
+
+#### Comprehensive Regression Tests - test_databricks_struct_interval.py
+- **31 tests** organized in 7 categories:
+  - TestKeywordAsTableName (4 tests)
+  - TestKeywordAsColumnName (5 tests)
+  - TestKeywordAsStructFieldName (7 tests)
+  - TestComplexScenarios (2 tests)
+  - TestInvalidSyntaxStillFails (6 tests)
+  - TestTypeVariations (2 tests)
+  - TestCommentHandling (5 tests)
+
+#### Smoke Tests - smoke_repro.py
+- 18 smoke tests verifying all fixes ✅
+
+### **📚 Documentation**
+
+1. **README.md** - Comprehensive project guide with usage examples
+2. **FEATURE_SPEC.md** - Detailed feature specification 
+3. **IMPLEMENTATION_SUMMARY.md** - Complete implementation report
+4. **DELIVERY_CHECKLIST.md** - Full verification checklist
+
+### **🚀 Automation**
+
+- **run_tests.ps1** - Windows PowerShell test runner (one-click)
+- **run_tests.sh** - Linux/Mac bash runner
+- **smoke_repro.py** - Smoke test script
+
+### **📦 Requirements**
+
+- **requirements.txt** - Zero external dependencies for core parsing
+- **requirements-dev.txt** - Development/test dependencies only
+
+### **✅ Verification Results**
+
+```
+Total Tests: 37 tests collected
+Pass Rate: 100% (37/37 PASSED) ✅
+
+Breakdown:
+  - Original bug reproduction tests: 6/6 ✅
+  - Regression tests: 31/31 ✅
+  - Smoke tests: 18/18 ✅ (run separately)
+```
+
+### **🎯 Requirements Met**
+
+✅ All 6 bugs fixed (keywords work as identifiers in all contexts)
+✅ Quoted identifiers still work (backward compatible)
+✅ Invalid syntax still fails appropriately
+✅ Complex scenarios work (keywords in all positions simultaneously)
+✅ API preserved: `parse_one(sql: str, read: str = "databricks") -> CreateTable`
+✅ Minimal changes (~15-20 lines)
+✅ No new dependencies
+✅ Code readable and consistent
+
+### **💡 Key Examples - Now Working**
+
+```python
+from mini_sqlglot import parse_one
+
+# ✅ Keywords as table names
+parse_one("CREATE TABLE interval (col STRUCT<foo: INT>)")
+
+# ✅ Keywords as column names
+parse_one("CREATE TABLE t (interval STRUCT<foo: INT>)")
+
+# ✅ Keywords as struct field names
+parse_one("CREATE TABLE t (col STRUCT<interval: INT>)")
+
+# ✅ Multiple keywords with COMMENT
+parse_one("CREATE TABLE interval (comment STRUCT<struct: INT COMMENT 'desc'>)")
+
+# ✅ Quoted identifiers still work
+parse_one("CREATE TABLE `interval` (`comment` STRUCT<`struct`: INT>)")
+```
+
+### **🏗️ Project Structure**
+
+```
+✅ Core Fixes:
+  - src/mini_sqlglot/tokenizer.py (FIXED)
+  - src/mini_sqlglot/parser.py (FIXED)
+
+✅ Tests (55+ tests):
+  - test_interval_bug.py (6 tests)
+  - tests/test_databricks_struct_interval.py (31 tests)
+  - scripts/smoke_repro.py (18 smoke tests)
+
+✅ Documentation (4 docs):
+  - README.md
+  - FEATURE_SPEC.md
+  - IMPLEMENTATION_SUMMARY.md
+  - DELIVERY_CHECKLIST.md
+
+✅ Automation (3 runners):
+  - run_tests.ps1 (Windows)
+  - run_tests.sh (Linux/Mac)
+  - scripts/smoke_repro.py (Standalone)
+
+✅ Dependencies:
+  - requirements.txt (0 runtime deps)
+  - requirements-dev.txt (pytest only)
+```
+
+### **🚦 How to Use**
+
+Run all tests with one command:
+```powershell
+.\run_tests.ps1
+```
+
+Or use pytest directly:
+```bash
+$env:PYTHONPATH="src"
+python -m pytest -v
+```
+
+---
+
+**Status: ✅ COMPLETE & PRODUCTION READY**
+
+All requirements met. All 55+ tests passing. Zero new dependencies. Full backward compatibility maintained. Ready for deployment.
+
+Made changes.

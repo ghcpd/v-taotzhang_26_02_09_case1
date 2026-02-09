@@ -40,7 +40,11 @@ class Parser:
     def parse(self) -> CreateTable:
         self.eat("KW", "CREATE")
         self.eat("KW", "TABLE")
-        table = self.eat("IDENT").text
+        # Accept either IDENT or KW as table name (Databricks ANSI compliance)
+        table_tok = self.cur()
+        if table_tok.kind not in ("IDENT", "KW"):
+            raise ParseError(f"Expected table name, got {table_tok.kind}:{table_tok.text}")
+        table = self.eat(table_tok.kind).text
 
         self.eat("(", "(")
         columns: List[ColumnDef] = [self.parse_column()]
@@ -54,8 +58,17 @@ class Parser:
         return CreateTable(table_name=table, columns=columns)
 
     def parse_column(self) -> ColumnDef:
-        name = self.eat("IDENT").text
-        self.eat("KW", "STRUCT")
+        # Accept either IDENT or KW as column name (Databricks ANSI compliance)
+        col_tok = self.cur()
+        if col_tok.kind not in ("IDENT", "KW"):
+            raise ParseError(f"Expected column name, got {col_tok.kind}:{col_tok.text}")
+        name = self.eat(col_tok.kind).text
+        
+        # Expect STRUCT keyword (could be KW or IDENT after removing from KEYWORDS)
+        struct_tok = self.cur()
+        if struct_tok.text != "STRUCT":
+            raise ParseError(f"Expected STRUCT, got {struct_tok.text}")
+        self.eat(struct_tok.kind)
         self.eat("<", "<")
 
         fields: List[StructField] = [self.parse_struct_field()]
@@ -69,12 +82,11 @@ class Parser:
     def parse_struct_field(self) -> StructField:
         tok = self.cur()
 
-        # field name
-        if tok.kind == "IDENT":
-            field_name = self.eat("IDENT").text
+        # field name: accept either IDENT or KW (Databricks ANSI compliance)
+        if tok.kind in ("IDENT", "KW"):
+            field_name = self.eat(tok.kind).text
         else:
-            # for now, require identifiers only
-            raise ParseError(f"Expected struct field IDENT, got {tok.kind}:{tok.text}")
+            raise ParseError(f"Expected struct field name, got {tok.kind}:{tok.text}")
 
         self.eat(":", ":")
 
@@ -84,9 +96,11 @@ class Parser:
             raise ParseError("Expected type name")
         type_name = self.eat(type_tok.kind).text
 
-        # optional comment
+        # optional comment (check for text "COMMENT" regardless of token kind)
         comment = None
-        if self.maybe_eat("KW", "COMMENT"):
+        comment_tok = self.cur()
+        if comment_tok.text == "COMMENT":
+            self.eat(comment_tok.kind)
             # comment literal
             comment = self.eat("STRING").text
 

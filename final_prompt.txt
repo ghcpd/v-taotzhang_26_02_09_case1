@@ -1,0 +1,121 @@
+# TITLE - Databricks Identifier/Keyword Handling Regression (Multiple Keywords as Identifiers)
+
+## [Problem Statement]
+You are working on a lightweight SQL parsing module that supports a small subset of Databricks DDL. A user reported that parsing Databricks SQL fails when using certain words (like `interval`, `comment`, `struct`) as identifiers without backticks, even though Databricks documentation indicates these are not reserved keywords under ANSI compliance and should be usable as identifiers in appropriate contexts.
+
+The parser currently supports `CREATE TABLE ... ( col STRUCT<...> )` and optional `COMMENT '...'` on struct fields. However, a systematic regression/bug causes the parser to incorrectly treat context-dependent keywords as globally reserved, breaking valid Databricks SQL.
+
+### Specific Bug Manifestations
+
+The following 6 related bugs have been identified:
+
+**Bug 1-3 (Tokenizer Level)**: Words incorrectly categorized as globally reserved keywords
+- `INTERVAL` is in the KEYWORDS set but should be usable as an identifier
+- `COMMENT` is in the KEYWORDS set but should be usable as an identifier (contextual keyword)
+- `STRUCT` is in the KEYWORDS set but should be usable as an identifier (contextual keyword)
+
+**Bug 4-6 (Parser Level)**: Parser strictly requires IDENT tokens in identifier positions, rejecting KW tokens
+- Table names: Parser rejects keywords as table names
+- Column names: Parser rejects keywords as column names  
+- Struct field names: Parser rejects keywords as struct field names
+
+Your task is to fix these functional bugs so that the parser behaves as Databricks specifies.
+
+## [Requirements]
+
+### Functional Requirements
+
+1) **Databricks mode fix**: In `read="databricks"` mode, the following must parse successfully:
+   - `CREATE TABLE interval (col STRUCT<foo: INT>)` — keyword as table name
+   - `CREATE TABLE t (interval STRUCT<foo: INT>)` — keyword as column name
+   - `CREATE TABLE t (col STRUCT<interval: DOUBLE>)` — keyword as struct field name
+   - `CREATE TABLE t (col STRUCT<comment: STRING>)` — keyword as struct field name
+   - `CREATE TABLE t (col STRUCT<struct: INT>)` — keyword as struct field name
+   - `CREATE TABLE t (col STRUCT<interval: DOUBLE COMMENT 'description'>)` — with COMMENT clause
+
+2) **Keep quoted identifiers working**: The following must still parse correctly:
+   - `CREATE TABLE `interval` (col STRUCT<foo: INT>)`
+   - `CREATE TABLE t (`interval` STRUCT<foo: INT>)`
+   - `CREATE TABLE t (col STRUCT<`interval`: DOUBLE>)`
+   - `CREATE TABLE t (col STRUCT<`interval`: DOUBLE COMMENT 'aaa'>)`
+
+3) **Do not relax invalid syntax**: Clearly invalid struct definitions must still fail:
+   - Missing `:` in struct field definition
+   - Missing `>` to close struct
+   - Missing type after `:`
+   - Other syntactically invalid constructs
+
+4) **Preserve API**: Keep the public entrypoint `parse_one(sql: str, read: str = "databricks") -> CreateTable`
+
+5) **Regression tests**: Add comprehensive tests proving:
+   - All 6 bugs are fixed (unquoted keywords work as identifiers)
+   - Quoted identifiers still work
+   - Invalid syntax still fails appropriately
+
+### Non-Functional Requirements
+
+- Make changes minimal and localized
+- No new dependencies beyond test tooling
+- Keep code readable and consistent with existing style
+- Maintain backward compatibility for valid syntax
+
+## [Expected Deliverables]
+
+1. **Patch fixing all 6 bugs**:
+   - Fix tokenizer to handle context-dependent keywords appropriately
+   - Fix parser to accept keywords in identifier positions
+   
+2. **Test suite update** covering:
+   - Unquoted `interval` as table name (should pass)
+   - Unquoted `interval` as column name (should pass)
+   - Unquoted `interval` as struct field name (should pass)
+   - Unquoted `comment` as struct field name (should pass)
+   - Unquoted `struct` as struct field name (should pass)
+   - Backticked versions of above (should pass)
+   - Invalid struct syntax cases (should fail appropriately)
+   - Struct field with COMMENT clause using keyword identifiers (should pass)
+
+3. **Documentation**:
+   - Short note explaining what changed and why
+   - Before/after examples demonstrating the fix
+
+## [Scope & Constraints]
+
+### In Scope
+- Tokenizer behavior: Handling of context-dependent keywords vs. identifiers
+- Parser behavior: Accepting keywords in identifier positions (table names, column names, struct field names)
+- Databricks dialect handling and ANSI compliance
+- Comment parsing on struct fields
+
+### Out of Scope
+- Full SQL dialect coverage beyond provided subset
+- Full Databricks grammar beyond CREATE TABLE with STRUCT
+- Nested complex types beyond what base code already supports
+- Other SQL statements (SELECT, INSERT, etc.)
+
+### Constraints
+- Do not redesign the AST; modify only what is necessary
+- Maintain existing API contracts
+- Keep changes minimal and focused on the identified bugs
+
+## [Tasks]
+
+1. **Reproduce the failures** using the provided test cases
+2. **Identify root causes**:
+   - Why are certain words treated as globally reserved?
+   - Why does the parser reject keywords in identifier positions?
+3. **Implement fixes**:
+   - Option A: Remove non-structural keywords from KEYWORDS set
+   - Option B: Make parser accept both IDENT and KW tokens in identifier contexts
+   - Option C: Implement context-aware tokenization
+4. **Add regression tests** ensuring all 6 bugs are fixed
+5. **Verify** that invalid syntax still fails appropriately
+
+## [Supporting Files]
+- README.md — Give me a readme according to the requirements.
+- FEATURE_SPEC.md — Expected Databricks STRUCT identifier behavior (interval without backticks must parse)
+- run_tests.sh / run_tests.ps1 — One-click runner (venv → install deps → pytest → smoke repro)
+- requirements.txt / requirements-dev.txt — Reproducible dependencies
+- tests/test_databricks_struct_interval.py — Regression tests (quoted pass, unquoted pass, invalid fails)
+- scripts/smoke_repro.py — Minimal repro script for before/after verification
+

@@ -12,7 +12,6 @@ class Token:
 # Intentionally small keyword set for the exercise
 KEYWORDS = {
     "CREATE", "TABLE", "STRUCT", "COMMENT", "DOUBLE",
-    "INTERVAL",
 }
 
 
@@ -61,7 +60,7 @@ def tokenize(sql: str) -> List[Token]:
         upper = word.upper()
 
         if upper in KEYWORDS:
-            tokens.append(Token(kind="KW", text=upper))
+            tokens.append(Token(kind="KW", text=word))  # preserve original case
         else:
             tokens.append(Token(kind="IDENT", text=word))
 
